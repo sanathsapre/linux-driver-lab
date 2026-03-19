@@ -8,7 +8,7 @@ This repository follows a **progressive, concept-driven approach**, where each d
 
 # 📁 Repository Structure
 
-```
+```bash
 linux-driver-lab/
 ├── 01_msg_queue_driver.c        # Basic character driver (FIFO queue)
 ├── 02_poll_noblock_driver.c    # Blocking + non-blocking + poll/select
@@ -16,6 +16,9 @@ linux-driver-lab/
 ├── 02_polltest.c               # poll/select test program
 ├── 03_ioctl_driver.c           # IOCTL-enabled driver
 ├── 03_ioctl_test.c             # IOCTL test program
+├── 04_timer_driver.c           # Timer-based event driver
+├── Lessons_Learnt/
+│   └── 04_timer_learnings.html # Notes & learnings for timer driver
 ├── Makefile
 └── README.md
 ```
@@ -30,17 +33,25 @@ linux-driver-lab/
 
 ### Features
 
-* FIFO queue (3 messages × 128 bytes)
+* FIFO queue (16 messages × 128 bytes)
 * `read()` / `write()` support
 * Multi-process safe
 * Kernel-user communication
+
+### Queue Behavior ⚠️
+
+* Fixed-size circular buffer
+* When full → **oldest message is overwritten**
+* Ensures system always retains **latest data**
+
+This models **streaming systems** where freshness > completeness.
 
 ### Concepts Covered
 
 * `file_operations`
 * `copy_to_user` / `copy_from_user`
 * `cdev` registration
-* Mutex-based synchronization
+* Synchronization (mutex/spinlock basics)
 
 ---
 
@@ -48,7 +59,7 @@ linux-driver-lab/
 
 ### Features
 
-* Blocking `read()` (wait queues)
+* Blocking `read()` using wait queues
 * Non-blocking mode (`O_NONBLOCK`)
 * `poll()` / `select()` support
 * Multiple readers supported
@@ -66,7 +77,6 @@ linux-driver-lab/
 
 ### Features
 
-Updated FIFO queue (16 messages × 128 bytes)
 Control operations exposed via `ioctl()`:
 
 | Command          | Description                 |
@@ -84,6 +94,48 @@ Control operations exposed via `ioctl()`:
 
 ---
 
+## 🔹 04 — Timer-Based Event Driver
+
+### Features
+
+* Kernel timer (`timer_list`) based event generation
+* Periodic event generation (~1 second interval)
+* Asynchronous producer (kernel) → consumer (user-space)
+* Blocking `read()` using wait queues
+* IOCTL control:
+
+  * START_TIMER
+  * STOP_TIMER
+
+### Event Format
+
+```
+timer_event_<counter>
+```
+
+Example:
+
+```
+timer_event_1
+timer_event_2
+```
+
+### Queue Behavior
+
+* FIFO queue (16 × 128 bytes)
+* Drop-oldest policy when full
+* Models **real-time streaming systems (camera pipelines)**
+
+### Concepts Covered
+
+* Kernel timers (`timer_setup`, `mod_timer`)
+* Interrupt context vs process context
+* Producer–consumer model
+* Wait queue + wakeup integration
+* Spinlocks for concurrency protection
+
+---
+
 # 🧪 User-Space Test Programs
 
 ---
@@ -96,11 +148,6 @@ Tests **non-blocking read behavior**
 ./02_nbread
 ```
 
-Expected:
-
-* Immediate return when queue is empty
-* `EAGAIN` handling
-
 ---
 
 ## 🔸 02_polltest.c
@@ -111,32 +158,19 @@ Tests **poll/select behavior**
 ./02_polltest
 ```
 
-Expected:
-
-* Waits for data
-* Wakes up when message is written
-
 ---
 
 ## 🔸 03_ioctl_test.c
 
-Tests all IOCTL commands
+Tests IOCTL commands
 
 ```bash
 ./03_ioctl_test
 ```
 
-Expected:
-
-* Queue size reporting
-* Queue clearing
-* Device reset behavior
-
 ---
 
 # ⚙️ Build Instructions
-
-Build kernel modules:
 
 ```bash
 make
@@ -162,50 +196,56 @@ dmesg | tail
 
 ---
 
-# 📟 Device Node
-
-Example:
+# 📟 Device Nodes
 
 ```bash
-ls -l /dev/sanath_queue
+/dev/sanath_queue   # Drivers 01–03
+/dev/sanath_timer   # Driver 04
 ```
 
 ---
 
-# 🧪 Basic Usage
+# 🧪 Example Usage
 
-### Write to device
+### Write
 
 ```bash
 echo "hello" > /dev/sanath_queue
 ```
 
-### Read from device
+### Read
 
 ```bash
 cat /dev/sanath_queue
 ```
 
----
-
-# 🧪 IOCTL Usage Example
+### Timer Control
 
 ```c
-ioctl(fd, GET_QUEUE_SIZE);
-ioctl(fd, CLEAR_QUEUE);
+ioctl(fd, START_TIMER);
+ioctl(fd, STOP_TIMER);
 ```
+
+---
+
+# 📘 Lessons Learnt
+
+Detailed notes for Timer Driver:
+
+👉 See: `Lessons_Learnt/04_timer_learnings.html`
+
+(Contains insights on timers, wait queues, race conditions, and debugging)
 
 ---
 
 # 🧠 What This Repository Demonstrates
 
-This project showcases:
-
-* Real Linux driver behavior (not toy examples)
+* Real Linux driver design patterns
 * Blocking vs non-blocking I/O
-* Event-driven design (`poll/select`)
-* Driver control via `ioctl`
-* Safe concurrency handling
+* Event-driven architecture (`poll/select`)
+* IOCTL-based control interfaces
+* Asynchronous kernel event generation
+* Concurrency handling (spinlocks, wait queues)
 
 ---
 
@@ -217,20 +257,20 @@ Completed:
 * [x] Wait queues
 * [x] poll/select
 * [x] IOCTL interface
+* [x] Kernel timers
 
 Upcoming:
 
-* [ ] Timer-based driver
 * [ ] Workqueue driver
 * [ ] GPIO driver (hardware interaction)
-* [ ] Interrupt handling
+* [ ] Interrupt-driven driver
 * [ ] Platform driver (device tree)
 
 ---
 
 # ⚠️ Disclaimer
 
-These drivers are implemented for **learning and experimentation purposes** and are not production-ready.
+These drivers are implemented for **learning purposes** and are not production-ready.
 
 ---
 
@@ -242,6 +282,6 @@ Sanath Kumar P Sapre
 
 # ⭐ Final Note
 
-This repository reflects a **step-by-step journey into Linux kernel development**, focusing on building real understanding through implementation.
+This repository represents a **progressive journey into Linux kernel development**.
 
-Each driver adds a new layer of complexity — similar to how real-world kernel subsystems evolve.
+Each driver builds on the previous one, moving closer to **real-world embedded systems and device drivers**.

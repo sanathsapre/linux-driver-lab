@@ -5,7 +5,7 @@ KDIR := /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)
 
 # userspace applications
-APPS := 02_nbread 02_polltest 03_ioctl_test 04_timer_test
+APPS := 02_nbread 02_polltest 03_ioctl_test 04_timer_test 04_timer_read
 
 all: modules $(APPS)
 
@@ -22,6 +22,9 @@ modules:
 	$(CC) -o $@ $<
 
 03_ioctl_test: 04_timer_test.c
+	$(CC) -o $@ $<
+
+03_ioctl_read: 04_timer_read.c
 	$(CC) -o $@ $<
 
 clean:

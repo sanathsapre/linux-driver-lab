@@ -46,6 +46,9 @@ static struct timer_list etx_timer;
 dev_t dev = 0;
 static struct class *dev_class;
 static struct cdev etx_cdev;
+
+static DECLARE_WAIT_QUEUE_HEAD(etx_wait_queue);
+
 typedef struct kernel_logger
 {
     uint8_t kernel_buffer[ROW_SIZE][MEM_SIZE];
@@ -57,7 +60,14 @@ typedef struct kernel_logger
     int timer_active;    /* ← add this */
 } kernel_logger_t;
 
-kernel_logger_t kernel_logger;
+static kernel_logger_t kernel_logger = 
+{
+        .read_indexer = 0,
+        .write_indexer = 0,
+        .count = 0,
+        .timer_count = 0,
+        .timer_active = 0,
+};
 
 /*
 ** Function Prototypes
@@ -98,19 +108,26 @@ static char *etx_devnode(const struct device *dev, umode_t *mode)
 */
 static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
+        unsigned long flags;
+
          switch(cmd) {
 
                 case START_TIMER:
                         pr_info("ioctl START_TIMER\n");
+
+                        spin_lock_irqsave(&kernel_logger.lock, flags);
                         kernel_logger.timer_active = 1;    /* ← set before starting */
-                        /* setup your timer to call my_timer_callback */
-                        timer_setup(&etx_timer, timer_callback, 0);       //If you face some issues and using older kernel version, then you can try setup_timer API(Change Callback function's argument to unsingned long instead of struct timer_list *.
+                        spin_unlock_irqrestore(&kernel_logger.lock, flags);
+
                         /* setup timer interval to based on TIMEOUT Macro */
                         mod_timer(&etx_timer, jiffies + msecs_to_jiffies(TIMEOUT));
                         break;
 
                 case STOP_TIMER:
+                        spin_lock_irqsave(&kernel_logger.lock, flags);
                         kernel_logger.timer_active = 0;    /* ← clear before stopping */
+                        spin_unlock_irqrestore(&kernel_logger.lock, flags);    
+
                         pr_info("ioctl STOP_TIMER\n");
                         /* remove kernel timer when unloading module */
                         del_timer_sync(&etx_timer);
@@ -146,33 +163,36 @@ static int etx_release(struct inode *inode, struct file *file)
 */
 static ssize_t etx_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
 {
-        ssize_t ret = 0;
         /* declare flags variable at the top of each function */
         unsigned long flags;
-         uint8_t tmp[MEM_SIZE];      /* local kernel buffer */
+        uint8_t tmp[MEM_SIZE];      /* local kernel buffer */
         size_t copy_len = 0;
+        size_t msg_len = 0;
         
+        /* get actual string length, cap at MEM_SIZE */
+        msg_len = strnlen(kernel_logger.kernel_buffer[kernel_logger.read_indexer], MEM_SIZE);
         /* never copy more than what the caller can receive */
-        copy_len = min(len, (size_t)MEM_SIZE);
+        copy_len = min(len, msg_len);
         //Copy the data from the kernel space to the user-space
         spin_lock_irqsave(&kernel_logger.lock, flags);
 
-        /* empty check now uses count, not index comparison */
-        while (kernel_logger.count == 0)
-        {
-              pr_info("Data Read : Buffer empty\n");
-              ret = 0;
-              goto out;
+        while (kernel_logger.count == 0) {
+            spin_unlock_irqrestore(&kernel_logger.lock, flags);
+            pr_info("Data Read : Buffer empty\n");
+            if (wait_event_interruptible_exclusive(etx_wait_queue, kernel_logger.count > 0))
+                return -ERESTARTSYS;
+            spin_lock_irqsave(&kernel_logger.lock, flags);
         }
-
-        pr_info("Data Read : Done!\n");
-        /* copy to local buffer while holding spinlock */
+        
+        /* compute lengths here — after lock acquired and count > 0 guaranteed */
+        msg_len  = strnlen(kernel_logger.kernel_buffer[kernel_logger.read_indexer], MEM_SIZE);
+        copy_len = min(len, msg_len);
+        
         memcpy(tmp, kernel_logger.kernel_buffer[kernel_logger.read_indexer], copy_len);
         memset(kernel_logger.kernel_buffer[kernel_logger.read_indexer], 0, MEM_SIZE);
         kernel_logger.read_indexer = (kernel_logger.read_indexer + 1) % ROW_SIZE;
         kernel_logger.count--;
-
-        /* release spinlock before copy_to_user */
+        
         spin_unlock_irqrestore(&kernel_logger.lock, flags);
 
         if (copy_to_user(buf, tmp, copy_len)) {
@@ -180,11 +200,7 @@ static ssize_t etx_read(struct file *filp, char __user *buf, size_t len, loff_t 
                 return -EFAULT;
         }
 
-        pr_info("Data Read : Done!\n");
         return copy_len;
-out:
-        spin_unlock_irqrestore(&kernel_logger.lock, flags);
-        return ret;
 }
 
 /*
@@ -194,6 +210,7 @@ void timer_callback(struct timer_list * data)
 {
         /* declare flags variable at the top of each function */
         unsigned long flags;
+        uint8_t is_active = 0;
 
         spin_lock_irqsave(&kernel_logger.lock, flags);
         snprintf(kernel_logger.kernel_buffer[kernel_logger.write_indexer], MEM_SIZE, "timer_event_%ld\n",kernel_logger.timer_count++);
@@ -209,13 +226,20 @@ void timer_callback(struct timer_list * data)
         else
                 /* full — oldest overwritten, bump read to stay valid */
                 kernel_logger.read_indexer = (kernel_logger.read_indexer + 1) % ROW_SIZE;
-        spin_unlock_irqrestore(&kernel_logger.lock, flags);
+        
+        wake_up_interruptible(&etx_wait_queue);        
+
         /*
         Re-enable timer. Because this function will be called only first time. 
         If we re-enable this will work like periodic timer. 
         */
         /* only re-arm if timer is still active */
         if (kernel_logger.timer_active)
+                is_active = 1;
+
+        spin_unlock_irqrestore(&kernel_logger.lock, flags);
+        
+        if(1 == is_active)
                 mod_timer(&etx_timer, jiffies + msecs_to_jiffies(TIMEOUT));
 }
 
@@ -253,9 +277,11 @@ static int __init etx_driver_init(void)
             pr_info("Cannot create the Device 1\n");
             goto r_device;
         }
-        spin_lock_init(&kernel_logger.lock);
 
-        //strcpy(kernel_buffer, "Hello_World");
+        spin_lock_init(&kernel_logger.lock);
+        
+        /* setup your timer to call my_timer_callback */
+        timer_setup(&etx_timer, timer_callback, 0);       //If you face some issues and using older kernel version, then you can try setup_timer API(Change Callback function's argument to unsingned long instead of struct timer_list *.
         
         pr_info("Device Driver Insert...Done!!!\n");
         return 0;
