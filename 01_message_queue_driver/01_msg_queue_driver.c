@@ -1,11 +1,9 @@
 /***************************************************************************//**
-*  \file       driver.c
+*  \file       01_msg_queue_driver.c
 *
-*  \details    Simple Linux device driver (Real Linux Device Driver)
+*  \details    Simple Linux device driver kernel buffer
 *
-*  \author     EmbeTronicX
-*
-*  \Tested with Linux raspberrypi 5.10.27-v7l-embetronicx-custom+
+*  \author     Sanath Sapre
 *
 *******************************************************************************/
 #include <linux/kernel.h>
@@ -84,8 +82,12 @@ static int etx_open(struct inode *inode, struct file *file)
         done = (int *)kmalloc(sizeof(int), GFP_KERNEL);
 
         if(!done)
+        {
                 pr_info("Malloc failed");
-
+                return -ENOMEM;
+        }
+        
+        *done = 0; //Initialize done to zero
         file->private_data = done;
 
         pr_info("Device File Opened...!!!\n");
@@ -97,6 +99,9 @@ static int etx_open(struct inode *inode, struct file *file)
 */
 static int etx_release(struct inode *inode, struct file *file)
 {
+        kfree(file->private_data);
+        file->private_data = NULL;    /* safety — prevent dangling pointer */
+
         pr_info("Device File Closed...!!!\n");
         return 0;
 }

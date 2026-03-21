@@ -17,12 +17,3 @@ user:
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
 	rm -f $(USER_APPS)
-
-load:
-	sudo insmod 04_timer_driver.ko
-
-unload:
-	sudo rmmod 04_timer_driver
-
-log:
-	dmesg | tail -20

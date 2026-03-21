@@ -8,12 +8,3 @@ all:
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
-
-load:
-	sudo insmod 01_msg_queue_driver.ko
-
-unload:
-	sudo rmmod 01_msg_queue_driver
-
-log:
-	dmesg | tail -20

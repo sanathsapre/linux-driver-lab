@@ -17,12 +17,3 @@ user:
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
 	rm -f $(USER_APPS)
-
-load:
-	sudo insmod 02_poll_noblock_driver.ko
-
-unload:
-	sudo rmmod 02_poll_noblock_driver
-
-log:
-	dmesg | tail -20

@@ -1,11 +1,9 @@
 /***************************************************************************//**
-*  \file       driver.c
+*  \file       01_msg_queue_driver.c
 *
-*  \details    Simple Linux device driver (Real Linux Device Driver)
+*  \details    Simple Linux device driver kernel timer driver
 *
-*  \author     EmbeTronicX
-*
-*  \Tested with Linux raspberrypi 5.10.27-v7l-embetronicx-custom+
+*  \author     Sanath Sapre
 *
 *******************************************************************************/
 #include <linux/kernel.h>
