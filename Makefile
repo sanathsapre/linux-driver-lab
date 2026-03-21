@@ -1,32 +1,31 @@
-obj-m += 04_timer_driver.o
+SUBDIRS = \
+	01_message_queue_driver \
+	02_nonblocking_poll_driver \
+	03_ioctl_interface \
+	04_kernel_timer_driver
 
-CC = gcc
-KDIR := /lib/modules/$(shell uname -r)/build
-PWD  := $(shell pwd)
+.PHONY: all clean load unload log
 
-# userspace applications
-APPS := 02_nbread 02_polltest 03_ioctl_test 04_timer_test 04_timer_read
-
-all: modules $(APPS)
-
-modules:
-	make -C $(KDIR) M=$(PWD) modules
-
-02_nbread: 02_nbread.c
-	$(CC) -o $@ $<
-
-02_polltest: 02_polltest.c
-	$(CC) -o $@ $<
-
-03_ioctl_test: 03_ioctl_test.c
-	$(CC) -o $@ $<
-
-03_ioctl_test: 04_timer_test.c
-	$(CC) -o $@ $<
-
-03_ioctl_read: 04_timer_read.c
-	$(CC) -o $@ $<
+all:
+	for dir in $(SUBDIRS); do \
+		$(MAKE) -C $$dir; \
+	done
 
 clean:
-	make -C $(KDIR) M=$(PWD) clean
-	rm -f $(APPS)
+	for dir in $(SUBDIRS); do \
+		$(MAKE) -C $$dir clean; \
+	done
+
+load:
+	for dir in $(SUBDIRS); do \
+		$(MAKE) -C $$dir load; \
+	done
+
+# reverse order unload (important)
+unload:
+	for dir in $(shell echo $(SUBDIRS) | tr ' ' '\n' | tac); do \
+		$(MAKE) -C $$dir unload; \
+	done
+
+log:
+	dmesg | tail -50

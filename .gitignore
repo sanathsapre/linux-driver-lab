@@ -7,3 +7,8 @@ modules.order
 Module.symvers
 *.cmd
 *.tmp
+*.ko
+*.o
+*.mod
+*.order
+*.symvers
