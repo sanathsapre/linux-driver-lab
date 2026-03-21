@@ -19,7 +19,7 @@
 #include <linux/mutex.h>
 #include <linux/stddef.h>
  
-#define ROW_SIZE        3           //Row Size
+#define ROW_SIZE        16           //Row Size
 #define MEM_SIZE        128           //Memory Size
 #define DONE    1
  
