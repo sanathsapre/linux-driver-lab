@@ -1,176 +1,144 @@
-# Linux Driver Lab 🚀
+# linux-driver-lab
 
-A hands-on collection of **Linux kernel driver implementations** along with corresponding **user-space test programs**, built to master **Embedded Linux and Kernel Development**.
+A progressive series of Linux kernel character drivers built toward a working understanding of **V4L2 and camera subsystem internals**, developed on a **BeagleBone Black (AM335x)** with cross-compilation from a Dell Latitude 5320.
 
-This repository follows a **progressive, concept-driven approach**, where each driver introduces a new kernel mechanism used in real-world systems.
+Each module introduces one new kernel mechanism. The design choices — particularly the drop-oldest queue policy — are deliberately modelled on real streaming pipelines where **data freshness matters more than completeness**.
 
 ---
 
-# 📁 Repository Structure
+## Target Hardware
 
-```bash
+| Role | Device |
+|---|---|
+| Host / cross-compile | Dell Latitude 5320 (x86_64) |
+| Target | BeagleBone Black (AM335x, ARMv7) |
+
+---
+
+## Repository Structure
+
+```
 linux-driver-lab/
-├── 01_msg_queue_driver.c        # Basic character driver (FIFO queue)
-├── 02_poll_noblock_driver.c    # Blocking + non-blocking + poll/select
-├── 02_nbread.c                 # Non-blocking read test program
-├── 02_polltest.c               # poll/select test program
-├── 03_ioctl_driver.c           # IOCTL-enabled driver
-├── 03_ioctl_test.c             # IOCTL test program
-├── 04_timer_driver.c           # Timer-based event driver
-├── Lessons_Learnt/
-│   └── 04_timer_learnings.html # Notes & learnings for timer driver
+├── 01_message_queue_driver/     # Character driver with FIFO ring buffer
+├── 02_nonblocking_poll_driver/  # Blocking, non-blocking, poll/select
+├── 03_ioctl_interface/          # ioctl control interface
+├── 04_kernel_timer_driver/      # Kernel timer + async event generation
+├── 05_kernel_workqueue_driver/  # Deferred work via workqueues
+├── 06_kernel_wq_poll_driver/    # Workqueue + poll/select + non-blocking I/O
 ├── Makefile
 └── README.md
 ```
 
----
-
-# 🧠 Drivers Overview
+Each directory contains the kernel module source, user-space test programs, and a `learnings.md` (drivers 04–06).
 
 ---
 
-## 🔹 01 — Message Queue Character Driver
+## Drivers
 
-### Features
+### 01 — Message Queue Character Driver
 
-* FIFO queue (16 messages × 128 bytes)
-* `read()` / `write()` support
-* Multi-process safe
-* Kernel-user communication
+A basic character device backed by a fixed-size circular buffer (16 messages × 128 bytes).
 
-### Queue Behavior ⚠️
+**Queue policy:** When the buffer is full, the oldest entry is overwritten. This is a deliberate design choice that mirrors the behaviour of V4L2 streaming buffers — the consumer always gets the most recent data, not stale frames. Blocking on a full queue would be wrong in a streaming context.
 
-* Fixed-size circular buffer
-* When full → **oldest message is overwritten**
-* Ensures system always retains **latest data**
-
-This models **streaming systems** where freshness > completeness.
-
-### Concepts Covered
-
-* `file_operations`
-* `copy_to_user` / `copy_from_user`
-* `cdev` registration
-* Synchronization (mutex/spinlock basics)
+**Kernel concepts:** `file_operations`, `cdev` registration, `copy_to_user` / `copy_from_user`, mutex-based concurrency, `class_create` / `device_create` for automatic `/dev` node creation.
 
 ---
 
-## 🔹 02 — Blocking + Non-Blocking + poll/select
+### 02 — Blocking, Non-Blocking, and poll/select
 
-### Features
+Extends the message queue driver to support all three I/O modes a real application might use.
 
-* Blocking `read()` using wait queues
-* Non-blocking mode (`O_NONBLOCK`)
-* `poll()` / `select()` support
-* Multiple readers supported
+**Kernel concepts:** Wait queues, `wake_up_interruptible`, `O_NONBLOCK` handling, `poll_wait`, `POLLIN` / `POLLOUT` mask.
 
-### Concepts Covered
-
-* Wait queues
-* Sleep/wakeup mechanism
-* Event-driven I/O
-* `poll_wait()` usage
+**Test programs:** `02_nbread.c` (non-blocking read), `02_polltest.c` (poll/select).
 
 ---
 
-## 🔹 03 — IOCTL Control Interface
+### 03 — ioctl Control Interface
 
-### Features
+Adds an `ioctl` control plane to the driver, exposing runtime inspection and reset operations.
 
-Control operations exposed via `ioctl()`:
+| Command | Description |
+|---|---|
+| `GET_QUEUE_SIZE` | Current number of messages in queue |
+| `GET_MAX_CAPACITY` | Maximum queue capacity |
+| `CLEAR_QUEUE` | Flush all messages |
+| `RESET_DEVICE` | Reset driver state |
 
-| Command          | Description                 |
-| ---------------- | --------------------------- |
-| GET_QUEUE_SIZE   | Returns number of messages  |
-| GET_MAX_CAPACITY | Returns queue capacity (16) |
-| CLEAR_QUEUE      | Clears all messages         |
-| RESET_DEVICE     | Resets driver state         |
+**Kernel concepts:** `unlocked_ioctl`, `_IOW` / `_IOR` macro definitions, kernel-user control interface design.
 
-### Concepts Covered
-
-* `unlocked_ioctl`
-* Kernel-user control interface
-* Extensible driver design
+**Test program:** `03_ioctl_test.c`.
 
 ---
 
-## 🔹 04 — Timer-Based Event Driver
+### 04 — Kernel Timer Driver
 
-### Features
+An asynchronous event producer using `timer_list`. The kernel fires a timer every ~1 second, writes a timestamped event to the ring buffer, and wakes up any blocked reader. Timer control is exposed via ioctl.
 
-* Kernel timer (`timer_list`) based event generation
-* Periodic event generation (~1 second interval)
-* Asynchronous producer (kernel) → consumer (user-space)
-* Blocking `read()` using wait queues
-* IOCTL control:
+**Event format:** `timer_event_<n>`
 
-  * START_TIMER
-  * STOP_TIMER
+**ioctl commands:** `START_TIMER`, `STOP_TIMER`
 
-### Event Format
+**Device node:** `/dev/sanath_timer`
 
-```
-timer_event_<counter>
-```
+This driver models the producer side of a camera pipeline — an external source generates frames asynchronously; the consumer reads them via blocking `read()`.
 
-Example:
+**Kernel concepts:** `timer_setup`, `mod_timer`, `del_timer_sync`, softirq context vs. process context, `spin_lock_irqsave` / `spin_unlock_irqrestore`, `timer_active` flag pattern to prevent re-arm after stop, staging `copy_to_user` outside the spinlock.
 
-```
-timer_event_1
-timer_event_2
-```
-
-### Queue Behavior
-
-* FIFO queue (16 × 128 bytes)
-* Drop-oldest policy when full
-* Models **real-time streaming systems (camera pipelines)**
-
-### Concepts Covered
-
-* Kernel timers (`timer_setup`, `mod_timer`)
-* Interrupt context vs process context
-* Producer–consumer model
-* Wait queue + wakeup integration
-* Spinlocks for concurrency protection
+**Test programs:** `04_timer_test.c` (start/stop via ioctl), `04_timer_read.c` (blocking read).
 
 ---
 
-# 🧪 User-Space Test Programs
+### 05 — Workqueue Driver
+
+Moves event generation out of the timer callback (softirq / atomic context) and into a kernel workqueue (process context). This is the standard pattern for any non-trivial processing that cannot safely run in atomic context — and is directly analogous to how V4L2 drivers defer frame processing.
+
+**Device node:** `/dev/sanath_worker`
+
+**Kernel concepts:** `DECLARE_WORK`, `schedule_work`, `flush_work`, system workqueue vs. dedicated workqueue, why process context matters (can sleep, can call `kmalloc(GFP_KERNEL)`), bottom-half mechanism selection (workqueue vs. softirq vs. tasklet).
+
+**Test programs:** `05_wq_test.c` (ioctl start/stop), `05_wq_read.c` (blocking read).
 
 ---
 
-## 🔸 02_nbread.c
+### 06 — Workqueue + poll/select + Non-Blocking I/O
 
-Tests **non-blocking read behavior**
+Combines the workqueue-based async producer from driver 05 with full `poll/select` support and non-blocking read mode. This is the most complete character driver in the series and represents the full I/O model that V4L2 applications rely on — `poll()` / `select()` on `/dev/videoX` alongside `O_NONBLOCK` reads.
+
+**Event format:** `worker_event_<n>`
+
+**Device node:** `/dev/sanath_worker`
+
+**ioctl commands:** `START_TIMER`, `STOP_TIMER`
+
+**Queue policy:** Drop-oldest on full buffer (16 × 128 bytes), identical to the `videobuf2` streaming model.
+
+**Kernel concepts:** `poll_wait`, `POLLIN | POLLRDNORM` mask, `O_NONBLOCK` / `EAGAIN` path, `wait_event_interruptible_exclusive`, combining spinlock-protected state with wait queue wakeup, `file->private_data` for per-fd state, `del_timer_sync` + `flush_work` in module exit for clean teardown.
+
+**Test programs:**
+
+| File | Purpose |
+|---|---|
+| `06_wq_test.c` | Start/stop timer via ioctl, runs for 30 seconds |
+| `06_poll_test.c` | `poll()` with 5-second timeout, then blocking read |
+| `06_nbread.c` | Non-blocking read — expects `EAGAIN` on empty buffer |
+
+---
+
+## Build
+
+Cross-compile for BeagleBone Black:
 
 ```bash
-./02_nbread
+export ARCH=arm
+export CROSS_COMPILE=arm-linux-gnueabihf-
+export KDIR=/path/to/bbb-kernel-source
+
+make
 ```
 
----
-
-## 🔸 02_polltest.c
-
-Tests **poll/select behavior**
-
-```bash
-./02_polltest
-```
-
----
-
-## 🔸 03_ioctl_test.c
-
-Tests IOCTL commands
-
-```bash
-./03_ioctl_test
-```
-
----
-
-# ⚙️ Build Instructions
+Native build (for host testing):
 
 ```bash
 make
@@ -178,110 +146,72 @@ make
 
 ---
 
-# 🚀 Load Driver
+## Deploy and Test
+
+Copy the module to the target:
 
 ```bash
-sudo insmod <driver>.ko
-dmesg | tail
+scp <driver>.ko user@beaglebone:/tmp/
 ```
 
----
-
-# 🧹 Unload Driver
+On the target:
 
 ```bash
-sudo rmmod <driver_name>
-dmesg | tail
-```
+sudo insmod /tmp/<driver>.ko
+dmesg | tail -20
 
----
-
-# 📟 Device Nodes
-
-```bash
-/dev/sanath_queue   # Drivers 01–03
-/dev/sanath_timer   # Driver 04
-```
-
----
-
-# 🧪 Example Usage
-
-### Write
-
-```bash
+# Basic smoke test (drivers 01–03)
 echo "hello" > /dev/sanath_queue
-```
-
-### Read
-
-```bash
 cat /dev/sanath_queue
+
+# Workqueue + poll driver (06)
+./06_wq_test &        # starts timer via ioctl, runs 30s
+./06_poll_test        # poll for first event
+./06_nbread           # non-blocking read — EAGAIN if buffer empty
+
+sudo rmmod <driver_name>
+dmesg | tail -10
 ```
 
-### Timer Control
+---
 
-```c
-ioctl(fd, START_TIMER);
-ioctl(fd, STOP_TIMER);
-```
+## Device Nodes
+
+Nodes are created automatically via `class_create` / `device_create` — no manual `mknod` required.
+
+| Node | Used by |
+|---|---|
+| `/dev/sanath_queue` | Drivers 01–03 |
+| `/dev/sanath_timer` | Driver 04 |
+| `/dev/sanath_worker` | Drivers 05–06 |
 
 ---
 
-# 📘 Lessons Learnt
+## Roadmap
 
-Detailed notes for Timer Driver:
+The progression is structured to build the knowledge needed for V4L2 driver development. Each stage maps directly to a concept V4L2 relies on.
 
-👉 See: `Lessons_Learnt/04_timer_learnings.html`
-
-(Contains insights on timers, wait queues, race conditions, and debugging)
-
----
-
-# 🧠 What This Repository Demonstrates
-
-* Real Linux driver design patterns
-* Blocking vs non-blocking I/O
-* Event-driven architecture (`poll/select`)
-* IOCTL-based control interfaces
-* Asynchronous kernel event generation
-* Concurrency handling (spinlocks, wait queues)
+| Stage | Driver / Concept | V4L2 Relevance |
+|---|---|---|
+| ✅ Done | Character driver, ring buffer | Buffer management, `vb2` queue model |
+| ✅ Done | Wait queues, poll/select | `select()` on `/dev/videoX` |
+| ✅ Done | ioctl interface | `VIDIOC_*` control plane |
+| ✅ Done | Kernel timers | Frame timing, periodic capture |
+| ✅ Done | Workqueues | Deferred frame processing out of IRQ context |
+| ✅ Done | Workqueue + poll + non-blocking | Full async I/O model used by V4L2 applications |
+| 🔲 Next | GPIO driver (BBB hardware) | Sensor control lines |
+| 🔲 Next | Interrupt-driven driver | Hardware capture triggers |
+| 🔲 Next | Platform driver + device tree overlay | AM335x peripheral binding |
+| 🔲 Future | V4L2 driver (videobuf2) | Full camera subsystem integration |
 
 ---
 
-# 📈 Learning Roadmap
+## Disclaimer
 
-Completed:
-
-* [x] Character driver
-* [x] Wait queues
-* [x] poll/select
-* [x] IOCTL interface
-* [x] Kernel timers
-
-Upcoming:
-
-* [ ] Workqueue driver
-* [ ] GPIO driver (hardware interaction)
-* [ ] Interrupt-driven driver
-* [ ] Platform driver (device tree)
+These drivers are written for learning purposes and are not production-ready.
 
 ---
 
-# ⚠️ Disclaimer
-
-These drivers are implemented for **learning purposes** and are not production-ready.
-
----
-
-# 👨‍💻 Author
+## Author
 
 Sanath Kumar P Sapre
-
----
-
-# ⭐ Final Note
-
-This repository represents a **progressive journey into Linux kernel development**.
-
-Each driver builds on the previous one, moving closer to **real-world embedded systems and device drivers**.
