@@ -19,6 +19,7 @@
 #include <linux/mutex.h>
 #include <linux/stddef.h>
  #include <linux/poll.h>
+ #include <linux/version.h>
 
 #define ROW_SIZE        16           //Row Size
 #define MEM_SIZE        128           //Memory Size
@@ -95,12 +96,31 @@ static struct file_operations fops =
 ** This function is to configure permissions for the dev node
 */
 
+/*
+** ===== DEVNODE COMPATIBILITY (STRICT MATCHING) =====
+*/
+
+/* Kernel 6.x (const struct device *) */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,0,0)
+
 static char *etx_devnode(const struct device *dev, umode_t *mode)
 {
     if (mode)
-        *mode = 0666;    /* rw for all */
+        *mode = 0666;
     return NULL;
 }
+
+#else   /* Kernel 5.x and below */
+
+/* Kernel 5.x (non-const struct device *) */
+static char *etx_devnode(struct device *dev, umode_t *mode)
+{
+    if (mode)
+        *mode = 0666;
+    return NULL;
+}
+
+#endif
 
 /*
 ** This function will be called when we write IOCTL on the Device file
@@ -326,7 +346,12 @@ static int __init etx_driver_init(void)
         }
  
         /*Creating struct class*/
-        if(IS_ERR(dev_class = class_create("sanath_class"))){
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
+        dev_class = class_create("sanath_class");
+#else
+        dev_class = class_create(THIS_MODULE, "sanath_class");
+#endif
+        if(IS_ERR(dev_class)){
             pr_info("Cannot create the struct class\n");
             goto r_class;
         }

@@ -22,6 +22,7 @@
 #include <linux/jiffies.h>
 #include <linux/err.h>
 #include <linux/workqueue.h>            // Required for workqueues
+#include <linux/version.h>
 
 //Timer Variable
 #define TIMEOUT 1000    //milliseconds
@@ -130,12 +131,27 @@ static struct file_operations fops =
 ** This function is to configure permissions for the dev node
 */
 
+/* Kernel 6.x (const struct device *) */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,0,0)
+
 static char *etx_devnode(const struct device *dev, umode_t *mode)
 {
     if (mode)
-        *mode = 0666;    /* rw for all */
+        *mode = 0666;
     return NULL;
 }
+
+#else   /* Kernel 5.x and below */
+
+/* Kernel 5.x (non-const struct device *) */
+static char *etx_devnode(struct device *dev, umode_t *mode)
+{
+    if (mode)
+        *mode = 0666;
+    return NULL;
+}
+
+#endif
 
 static __poll_t etx_poll(struct file *filp, poll_table *wait)
 {
@@ -315,7 +331,13 @@ static int __init etx_driver_init(void)
         }
  
         /*Creating struct class*/
-        if(IS_ERR(dev_class = class_create("sanath_class"))){
+    /* class_create compatibility */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
+        dev_class = class_create("sanath_class");
+#else
+        dev_class = class_create(THIS_MODULE, "sanath_class");
+#endif
+        if(IS_ERR(dev_class)){
             pr_info("Cannot create the struct class\n");
             goto r_class;
         }
