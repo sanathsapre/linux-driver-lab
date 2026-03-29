@@ -4,7 +4,8 @@ SUBDIRS = \
         03_ioctl_interface \
         04_kernel_timer_driver \
         05_kernel_workqueue_driver \
-        06_kernel_wq_poll_driver
+        06_kernel_wq_poll_driver \
+	07_BBB_GPIO_Driver
 
 .PHONY: all host target clean
 
