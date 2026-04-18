@@ -11,7 +11,8 @@ Each module introduces one new kernel mechanism. The design choices — particul
 | Role | Device |
 |---|---|
 | Host / cross-compile | Dell Latitude 5320 (x86_64) |
-| Target | BeagleBone Black (AM335x, ARMv7) |
+| Target (labs 01–06) | BeagleBone Black (AM335x, ARMv7) |
+| Target (labs 07+)   | Raspberry Pi 3 (BCM2837, ARMv7) |
 
 ---
 
@@ -199,10 +200,15 @@ The progression is structured to build the knowledge needed for V4L2 driver deve
 | ✅ Done | Kernel timers | Frame timing, periodic capture |
 | ✅ Done | Workqueues | Deferred frame processing out of IRQ context |
 | ✅ Done | Workqueue + poll + non-blocking | Full async I/O model used by V4L2 applications |
-| 🔲 Next | GPIO driver (BBB hardware) | Sensor control lines |
-| 🔲 Next | Interrupt-driven driver | Hardware capture triggers |
-| 🔲 Next | Platform driver + device tree overlay | AM335x peripheral binding |
+| ✅ Done | GPIO driver (BBB, AM335x) | Sensor control lines, GPIO ownership, Device Tree |
+| ✅ Done | Interrupt + Platform driver (RPi3, Yocto) | Hardware capture triggers, SoC peripheral binding |
+| 🔲 Next | V4L2 subdev driver (RPi3) | Sensor driver model, format negotiation |
 | 🔲 Future | V4L2 driver (videobuf2) | Full camera subsystem integration |
+---
+
+## Continuation
+
+The next phase of this series moves to **Raspberry Pi 3** with Yocto/Kirkstone, Device Tree overlays, platform drivers, and V4L2 — documented in [rpi-camera-driver-lab](https://github.com/sanathsapre/rpi-camera-driver-lab).
 
 ---
 
